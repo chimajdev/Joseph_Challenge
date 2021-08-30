@@ -1,0 +1,66 @@
+---
+- hosts: "{{ ip }}"
+  become: yes
+  vars:
+    http_port: 80
+  tasks:
+  - name: Install a list of packages with a list variable
+    yum:
+      name: ['httpd', 'mod_ssl']
+      state: latest
+    notify: 
+      restart httpd
+    
+  - name: Create app directory
+    file:
+      state: directory
+      path: "{{ item }}"
+      owner: apache
+      group: apache
+      mode: 0700
+    with_items:
+      - /etc/ssl/private/
+      - /var/www/html
+  
+  - name: "Generate the private key file to sign the CSR"
+    openssl_privatekey:
+      path: /etc/ssl/private/apache-selfsigned.key
+      size: 2048
+    
+  - name: "Generate the CSR file signed with the private key"
+    openssl_csr:
+      path: /etc/ssl/private/apache-selfsigned.csr
+      privatekey_path: /etc/ssl/private/apache-selfsigned.key
+    
+  - openssl_certificate:
+      provider: selfsigned
+      path: /etc/ssl/private/apache-selfsigned.crt
+      privatekey_path: /etc/ssl/private/apache-selfsigned.key
+      csr_path: /etc/ssl/private/apache-selfsigned.csr
+    
+  - name: Copy files 
+    copy:
+      src: /home/ec2-user/web/
+      dest: /var/www/html
+      owner: apache
+      group: apache
+      mode: 0755
+    tags:
+      - redeploy
+      - deploy
+
+  - name: create virtual host
+    template: 
+      src: "{{ item.src }}.conf" 
+      dest: "/etc/httpd/conf.d/{{ item.dest }}.conf"
+    loop:
+      - {"src": "virtualhost", "dest": "{{ ip }}" }
+      - {"src": "ssl", "dest": "ssl" }
+    notify: 
+      restart httpd
+
+  handlers:
+    - name: restart httpd
+      service: 
+        name: httpd 
+        state: restarted
